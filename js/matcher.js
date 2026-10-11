@@ -33,9 +33,10 @@ export const TARGETS = HANDS.flatMap((hand) =>
  * Distance from a set of concealed tiles plus exposures to every target.
  * @param counts Int8Array of concealed tile counts (jokers included at JOKER_INDEX)
  * @param exposures [{ type, size }] exposed groups (their jokers already count as the group)
+ * @param handIds optional Set of card hand ids to limit the targets to
  * @returns [{ target, distance }] for every target the exposures fit, unsorted
  */
-export function evaluate(counts, exposures = []) {
+export function evaluate(counts, exposures = [], handIds = null) {
   const jokers = counts[JOKER_INDEX];
   const expAdj = new Int8Array(NUM_TYPES);
   const expNeed = new Map();
@@ -46,6 +47,7 @@ export function evaluate(counts, exposures = []) {
   }
   const out = [];
   for (const target of TARGETS) {
+    if (handIds && !handIds.has(target.hand.id)) continue;
     if (exposures.length) {
       if (target.hand.concealed) continue;
       let fits = true;
@@ -68,8 +70,8 @@ export function evaluate(counts, exposures = []) {
 }
 
 /** Targets sorted closest first (ties: higher value first). */
-export function rankTargets(counts, exposures = []) {
-  return evaluate(counts, exposures).sort((a, b) => a.distance - b.distance || b.target.hand.value - a.target.hand.value);
+export function rankTargets(counts, exposures = [], handIds = null) {
+  return evaluate(counts, exposures, handIds).sort((a, b) => a.distance - b.distance || b.target.hand.value - a.target.hand.value);
 }
 
 export function bestDistance(counts, exposures = []) {
@@ -97,8 +99,8 @@ export function findWin(concealed, exposures = []) {
 }
 
 /** Closest card hands for a player, one entry per card hand (its closest variant). */
-export function closestHands(concealed, exposures = [], limit = 3) {
-  const ranked = rankTargets(countsOf(concealed), exposureShape(exposures));
+export function closestHands(concealed, exposures = [], limit = 3, handIds = null) {
+  const ranked = rankTargets(countsOf(concealed), exposureShape(exposures), handIds);
   const out = [];
   const seen = new Set();
   for (const r of ranked) {
@@ -108,6 +110,31 @@ export function closestHands(concealed, exposures = [], limit = 3) {
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/**
+ * For one way of making a hand, which of its tiles the player already has.
+ * Exposed tiles count as held. Real tiles go to pairs and singles first, then to
+ * groups; jokers fill the groups that are still short.
+ * @returns [{ type, n, have }] in the target's group order
+ */
+export function holdings(target, concealed, exposures = []) {
+  const avail = countsOf([...concealed, ...exposures.flatMap((e) => e.tiles)]);
+  const rows = target.groups.map((g) => ({ type: g.type, n: g.n, have: 0 }));
+  const take = (row) => {
+    const t = TYPE_INDEX[row.type];
+    const k = Math.min(avail[t], row.n - row.have);
+    avail[t] -= k;
+    row.have += k;
+  };
+  rows.filter((r) => r.n < 3).forEach(take);
+  rows.filter((r) => r.n >= 3).forEach(take);
+  for (const row of rows.filter((r) => r.n >= 3)) {
+    const k = Math.min(avail[JOKER_INDEX], row.n - row.have);
+    avail[JOKER_INDEX] -= k;
+    row.have += k;
+  }
+  return rows;
 }
 
 /**

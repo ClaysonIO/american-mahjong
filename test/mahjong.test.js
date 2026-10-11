@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDS, parsePattern, expandHand } from "../js/card.js";
-import { findWin, bestDistance, scoreWin, TARGETS } from "../js/matcher.js";
+import { findWin, bestDistance, scoreWin, TARGETS, closestHands, holdings } from "../js/matcher.js";
+import { suggestDiscard } from "../js/ai.js";
 import { countsOf, buildWall, seededRng, TYPES } from "../js/tiles.js";
 import { Game, aiController } from "../js/game.js";
 
@@ -93,6 +94,8 @@ test("computer-only games run to completion with consistent tile counts", async 
       wins++;
       const w = game.players[result.winner];
       assert.ok(findWin(w.hand, w.exposures));
+      // The 14th tile wins without a discard.
+      assert.equal(w.hand.length + w.exposures.reduce((a, e) => a + e.tiles.length, 0), 14);
       assert.equal(result.payments.reduce((a, b) => a + b, 0), 0);
     }
   }
@@ -108,4 +111,42 @@ test("the service worker caches every file of the site for offline play", async 
   for (const dir of ["js", "icons"]) for (const f of await readdir(new URL(dir, root))) site.push(`${dir}/${f}`);
   for (const f of site) assert.ok(cached.has(f), `sw.js doesn't cache ${f}`);
   for (const f of cached) if (f !== "./") assert.ok(site.includes(f), `sw.js caches missing file ${f}`);
+});
+
+test("everyone is dealt 13 tiles and East draws first", async () => {
+  const seen = [];
+  const ai = aiController(0);
+  const spy = (seat) => ({
+    ...ai,
+    async chooseCharlestonPass(g, s, dir) {
+      if (!seen.length) seen.push(g.players.map((p) => p.hand.length));
+      return ai.chooseCharlestonPass(g, s, dir);
+    },
+    async chooseTurnAction(g, s) {
+      if (seen.length === 1) seen.push({ seat, size: g.players[s].hand.length, drawn: !!g.players[s].lastDrawn, wall: g.wallCount });
+      return ai.chooseTurnAction(g, s);
+    },
+  });
+  const game = new Game({ controllers: [0, 1, 2, 3].map(spy), rng: seededRng(5), dealer: 2 });
+  await game.run();
+  assert.deepEqual(seen[0], [13, 13, 13, 13]);
+  assert.deepEqual(seen[1], { seat: 2, size: 14, drawn: true, wall: 152 - 52 - 1 });
+});
+
+test("lines: closest hands limited to picked lines, and which tiles are held", () => {
+  const hand = tiles("D2 D2 D2 D4 D4 D4 D6 D6 J N N E W");
+  const id = TARGETS.find((t) => t.hand.pattern === "222a 4444a 666a 8888a").hand.id;
+  const [best] = closestHands(hand, [], 1, new Set([id]));
+  assert.equal(best.target.hand.id, id);
+  // has 2,2,2 4,4,4 6,6 + joker; needs one 4 (joker fills it), one 6 and four 8s
+  assert.equal(best.distance, 5);
+  const held = holdings(best.target, hand).map((g) => `${g.type}:${g.have}/${g.n}`);
+  assert.deepEqual(held, ["D2:3/3", "D4:4/4", "D6:2/3", "D8:0/4"]);
+});
+
+test("suggested discard keeps the tiles the picked lines need", () => {
+  const hand = tiles("D2 D2 D2 D4 D4 D4 D6 D6 J N N E W S").map((type, id) => ({ id, type }));
+  const id = TARGETS.find((t) => t.hand.pattern === "222a 4444a 666a 8888a").hand.id;
+  const tile = suggestDiscard({ hand, exposures: [] }, new Set([id]));
+  assert.ok(["N", "E", "W", "S"].includes(tile.type), `discarded ${tile.type}`);
 });

@@ -38,7 +38,11 @@ and `?seed=42` makes the deals repeatable.
   Red with Crak, Soap with Dot; Soap is also the 0 in year hands), 8 flowers and 8 jokers.
 - **Charleston:** right, across, left, then an optional second Charleston
   (left, across, right) that any player can stop. Jokers can't be passed.
-- **Play:** East starts with 14 tiles and discards first. Each turn you draw and discard.
+- **Play:** everyone is dealt 13 tiles and East draws first. Each turn you draw and
+  discard, unless the tile you draw completes a hand: then it's Mahjong with no discard.
+- **Lines:** after the deal, the card opens with your tiles fixed at the top and the card
+  scrolling underneath. Pick up to 2 lines (hands) to aim for; the **Card** button
+  changes them at any time.
 - **Calling:** call a discard to expose a pung, kong or quint (jokers fill in), or to win.
   Mahjong beats an exposure; otherwise the player next in turn wins the call.
   Concealed hands only take a discard to win.
@@ -46,11 +50,16 @@ and `?seed=42` makes the deals repeatable.
 - **Scoring:** the hand's value from each player. The discarder pays double,
   on a self-drawn win everyone pays double, and a hand with no jokers doubles again.
   Scores are kept across games in the browser.
-- **Hints** (toggle at the top) show your three closest card hands, the tiles they
-  need and the tile a computer player would discard.
+- **Modes** (top of the screen, remembered):
+  - **Easy / Learning** marks the lines closest to your tiles as *Suggested*, shows how
+    many tiles each line needs to win and which ones you're missing, and suggests a discard
+    that fits your lines.
+  - **Regular** shows the card and the lines you picked, with no suggestions or counts.
 
 Left out to keep it basic: blind passes, the courtesy pass, dead hands and
 challenges, and the betting that some tables use.
+
+Player feedback and what was done about it is kept in [`docs/feedback/`](docs/feedback/).
 
 ## The card
 

@@ -71,9 +71,11 @@ export class Game {
   update() { this.onUpdate(this); }
 
   async run() {
-    for (const p of this.players) p.hand = this.wall.splice(0, p.seat === this.dealer ? 14 : 13);
+    // Everyone starts with 13; each turn starts with a draw, and a drawn (or called)
+    // 14th tile that completes a hand wins without a discard.
+    for (const p of this.players) p.hand = this.wall.splice(0, 13);
     for (const p of this.players) sortTiles(p.hand);
-    this.say(`East (${this.players[this.dealer].name}) starts with 14 tiles.`);
+    this.say(`Everyone has 13 tiles. East (${this.players[this.dealer].name}) draws first.`);
 
     this.phase = "charleston";
     await this.runCharleston();
@@ -119,7 +121,7 @@ export class Game {
 
   async play() {
     let seat = this.dealer;
-    let drew = false; // East discards first without drawing
+    let drew = true; // whether this turn starts with a draw (not after calling a discard)
     let calledFrom = null;
     for (;;) {
       const p = this.players[seat];

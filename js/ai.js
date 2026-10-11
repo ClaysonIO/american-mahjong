@@ -7,8 +7,8 @@ import { evaluate, findWin, rankTargets } from "./matcher.js";
 const exposureShape = (exposures) => exposures.map((e) => ({ type: e.type, size: e.tiles.length }));
 
 /** How much the best few targets want each tile type (higher = keep). */
-function usefulness(counts, exposures) {
-  const ranked = rankTargets(counts, exposures).slice(0, 12);
+function usefulness(counts, exposures, handIds = null) {
+  const ranked = rankTargets(counts, exposures, handIds).slice(0, 12);
   const score = new Float64Array(TYPES.length);
   if (!ranked.length) return score;
   const best = ranked[0].distance;
@@ -19,15 +19,15 @@ function usefulness(counts, exposures) {
   return score;
 }
 
-/** Picks the tile type to give away from `tiles`, never a joker. */
-function worstTileType(counts, exposures) {
-  const score = usefulness(counts, exposures);
+/** Picks the tile type to give away, never a joker. `handIds` limits the hands aimed for. */
+function worstTileType(counts, exposures, handIds = null) {
+  const score = usefulness(counts, exposures, handIds);
   let pick = null;
   for (let t = 0; t < TYPES.length; t++) {
     if (!counts[t] || t === JOKER_INDEX) continue;
     counts[t]--;
     let dist = Infinity;
-    for (const e of evaluate(counts, exposures)) if (e.distance < dist) dist = e.distance;
+    for (const e of evaluate(counts, exposures, handIds)) if (e.distance < dist) dist = e.distance;
     counts[t]++;
     const keep = score[t] / counts[t];
     if (!pick || dist < pick.dist || (dist === pick.dist && keep < pick.keep)) pick = { t, dist, keep };
@@ -80,6 +80,18 @@ export function chooseTurnAction(player, allPlayers) {
 
   const type = worstTileType(counts, shape) ?? player.hand[0].type;
   return { type: "discard", tile: player.hand.find((t) => t.type === type) };
+}
+
+/**
+ * The tile a player aiming for the given card hands (a Set of ids, or null for any)
+ * should discard, or null when there's nothing sensible to suggest.
+ */
+export function suggestDiscard(player, handIds = null) {
+  const counts = countsOf(player.hand);
+  const shape = exposureShape(player.exposures);
+  if (handIds && !evaluate(counts, shape, handIds).length) return null; // those hands are out of reach
+  const type = worstTileType(counts, shape, handIds);
+  return type && player.hand.find((t) => t.type === type);
 }
 
 function bestAfterDiscard(counts, shape) {

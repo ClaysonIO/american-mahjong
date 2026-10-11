@@ -14,7 +14,12 @@
   <header class="topbar">
     <h1>American Mahjong</h1>
     <div class="top-actions">
-      <label class="toggle"><input type="checkbox" id="hintsToggle" checked> Hints</label>
+      <label class="toggle">Mode
+        <select id="modeSelect">
+          <option value="easy">Easy / Learning</option>
+          <option value="regular">Regular</option>
+        </select>
+      </label>
       <button type="button" id="cardBtn">Card</button>
       <button type="button" id="rulesBtn">How to play</button>
       <button type="button" id="newGameBtn">New game</button>
@@ -41,22 +46,31 @@
       <div id="prompt" class="prompt"></div>
       <div id="hand" class="hand"></div>
       <div id="actions" class="actions"></div>
-      <div id="hints" class="hints"></div>
+      <div id="lines" class="lines"></div>
     </section>
   </main>
 
-  <aside id="cardPanel" class="card-panel" hidden>
-    <div class="card-head">
-      <h2>The Card</h2>
-      <button type="button" id="cardClose" aria-label="Close">✕</button>
+  <!-- Card selection: your tiles stay at the top while the card scrolls underneath. -->
+  <section id="picker" class="picker" hidden aria-labelledby="pickerTitle">
+    <div class="picker-top">
+      <div class="picker-head">
+        <h2 id="pickerTitle">Pick your lines</h2>
+        <span id="pickerCount" class="picker-count"></span>
+        <button type="button" id="pickerDone" class="primary">Done</button>
+      </div>
+      <div id="pickerHand" class="picker-hand"></div>
+      <div id="pickerNotice" class="picker-notice"></div>
     </div>
-    <p class="card-legend">
-      Colors are suits: <b class="s-a">first</b>, <b class="s-b">second</b>, <b class="s-c">third</b> (any suits, all different).
-      <b>X Y Z Q</b> = any consecutive numbers. <b>D</b> = the dragon of that suit, <b>0</b> = Soap.
-      <b>C</b> = concealed, <b>X</b> = exposed allowed.
-    </p>
-    <div id="cardList"></div>
-  </aside>
+    <div class="picker-body">
+      <p class="card-legend">
+        Pick up to 2 lines (hands) from the card to aim for; you can change them at any time with
+        the <b>Card</b> button. Colors are suits: <b class="s-a">first</b>, <b class="s-b">second</b>,
+        <b class="s-c">third</b> (any suits, all different). <b>X Y Z Q</b> = any consecutive numbers.
+        <b>D</b> = the dragon of that suit, <b>0</b> = Soap. <b>C</b> = concealed, <b>X</b> = exposed allowed.
+      </p>
+      <div id="pickerList"></div>
+    </div>
+  </section>
 
   <dialog id="resultDialog">
     <div id="resultBody"></div>
@@ -67,14 +81,16 @@
 
   <dialog id="rulesDialog">
     <h2>How to play</h2>
-    <p>Make one of the hands on <b>the Card</b> with 14 tiles. The 152 tiles are three suits
+    <p>Make one of the hands (lines) on <b>the Card</b> with 14 tiles.
+      Everyone is dealt 13 and picks up to 2 lines to aim for (change them any time with <b>Card</b>). The 152 tiles are three suits
       (Bam, Crak, Dot 1–9), winds, dragons, 8 flowers and 8 jokers. Each dragon goes with a suit:
       Green–Bam, Red–Crak, Soap (White)–Dot; Soap is also used as 0.</p>
     <ol>
       <li><b>Charleston.</b> Before play everyone passes 3 tiles right, across, then left. Anyone
         may stop the second Charleston (left, across, right). Jokers can't be passed.</li>
-      <li><b>Play.</b> East discards first. On your turn you draw a tile, then discard one. Click a tile, then
-        <i>Discard</i> (or click it again).</li>
+      <li><b>Play.</b> East goes first. On your turn you draw a tile, then discard one. Click a tile, then
+        <i>Discard</i> (or click it again). If the tile you draw completes your hand, that's
+        Mahjong: no discard needed.</li>
       <li><b>Calling.</b> When someone discards a tile you can call it to complete a group of
         3 or more (pung, kong, quint) and expose it, or to win. You can't call for a pair or single
         unless it wins. Concealed hands (C) may only call the winning tile.</li>
@@ -84,6 +100,8 @@
       <li><b>Mahjong!</b> Press it when your 14 tiles match the card. The discarder pays double,
         a self-drawn win is paid double by everyone, and a hand with no jokers doubles again.</li>
     </ol>
+    <p><b>Easy / Learning</b> mode suggests lines and discards and shows how many tiles you need
+      to win. <b>Regular</b> mode leaves that to you.</p>
     <p class="muted">This is a practice card written for this game, not the official National
       Mah Jongg League card. Simplified: no blind passes, courtesy pass or dead hands.</p>
     <form method="dialog" class="dialog-actions"><button>Close</button></form>

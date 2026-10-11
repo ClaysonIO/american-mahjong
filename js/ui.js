@@ -1,9 +1,9 @@
 // The screen: draws the table and turns clicks into answers for the game engine.
 
 import { Game, aiController } from "./game.js";
-import { CARD } from "./card.js";
-import { closestHands, findWin } from "./matcher.js";
-import { chooseTurnAction } from "./ai.js";
+import { CARD, HANDS } from "./card.js";
+import { closestHands, findWin, holdings } from "./matcher.js";
+import { suggestDiscard } from "./ai.js";
 import { JOKER, WIND_NAMES, seededRng, tileName } from "./tiles.js";
 
 // How long computer players think, in ms (?delay=0 in the address speeds them up).
@@ -15,6 +15,8 @@ const NAMES = ["You", "Rose", "Harriet", "Bea"];
 const ARROWS = { right: "→", across: "↑", left: "←" };
 const GROUP_NAMES = { 3: "Pung", 4: "Kong", 5: "Quint" };
 const SCORES_KEY = "mahjong.scores";
+const MODE_KEY = "mahjong.mode";
+const MAX_LINES = 2;
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -30,6 +32,20 @@ let game = null;
 let pending = null; // what the game is waiting for us to decide: { kind, resolve, ... }
 let selected = new Set(); // ids of selected tiles in my hand
 let notice = "";
+let mode = loadMode(); // "easy" (Easy / Learning: suggestions and tiles-to-win) or "regular"
+let lines = []; // ids of the card hands (lines) you picked, at most MAX_LINES
+let pickerNotice = "";
+
+const isEasy = () => mode === "easy";
+const linesSet = () => (lines.length ? new Set(lines) : null);
+const tilesToWin = (d) => (d === 0 ? "complete!" : `${d} tile${d === 1 ? "" : "s"} to win`);
+
+function loadMode() {
+  try { return localStorage.getItem(MODE_KEY) === "regular" ? "regular" : "easy"; } catch (_) { return "easy"; }
+}
+function saveMode() {
+  try { localStorage.setItem(MODE_KEY, mode); } catch (_) { /* ignore */ }
+}
 
 function loadScores() {
   try {
@@ -80,6 +96,7 @@ function newGame() {
   pending = null;
   selected.clear();
   notice = "";
+  lines = [];
   const g = new Game({
     names: NAMES,
     dealer,
@@ -89,7 +106,6 @@ function newGame() {
   });
   g.controllers[0] = humanController(g);
   game = g;
-  render();
   g.run().then((result) => {
     if (g !== game) return;
     if (!result.wallGame) {
@@ -103,6 +119,7 @@ function newGame() {
     notice = `Something went wrong: ${err.message}`;
     render();
   });
+  openPicker();
 }
 
 // ---------- Tiles ----------
@@ -204,7 +221,7 @@ function renderMe() {
   }
 
   renderPrompt(me);
-  renderHints(me);
+  renderLines(me);
 }
 
 function button(label, onClick, { primary = false, disabled = false } = {}) {
@@ -239,10 +256,13 @@ function renderPrompt(me) {
     prompt.textContent = "First Charleston done. Do a second Charleston (left, across, right)?";
     actions.append(button("Yes, keep passing", () => answer(true), { primary: true }), button("No, stop", () => answer(false)));
   } else if (pending.kind === "turn") {
-    prompt.textContent = "Your turn: pick a tile to discard (click it twice, or select and press Discard).";
+    const won = findWin(me.hand, me.exposures);
+    prompt.textContent = won
+      ? "Mahjong! Your 14 tiles make a hand on the card. Declare it; no discard needed."
+      : "Your turn: pick a tile to discard (click it twice, or select and press Discard).";
     const sel = me.hand.find((t) => selected.has(t.id));
-    actions.append(button("Discard", () => answer({ type: "discard", tile: sel }), { primary: true, disabled: !sel }));
-    if (findWin(me.hand, me.exposures)) actions.append(button("Mahjong!", () => answer({ type: "mahjong" }), { primary: true }));
+    if (won) actions.append(button("Mahjong!", () => answer({ type: "mahjong" }), { primary: true }));
+    actions.append(button("Discard", () => answer({ type: "discard", tile: sel }), { primary: !won, disabled: !sel }));
     const swap = sel && findJokerSwap(sel);
     if (swap) actions.append(button(`Swap for ${swap.owner.seat === 0 ? "your" : `${swap.owner.name}'s`} joker`, () => {
       answer({ type: "swap", tile: sel, seat: swap.owner.seat, exposure: swap.exposure });
@@ -279,27 +299,51 @@ function clickTile(t) {
   render();
 }
 
-function renderHints(me) {
-  const box = $("#hints");
+// Your picked lines under your hand. Easy / Learning mode also shows the tiles each
+// line still needs and suggests a discard; Regular mode only lists the lines.
+function renderLines(me) {
+  const box = $("#lines");
   box.replaceChildren();
-  if (!$("#hintsToggle").checked || game.phase === "over") return;
-  box.append(el("div", "hints-title", "Closest hands on the card"));
-  for (const { target, distance } of closestHands(me.hand, me.exposures, 3)) {
-    const row = el("div", "hint");
-    row.append(patternEl(target.hand.pattern), el("span", "muted", ` ${target.hand.value} pts · ${distance === 0 ? "complete!" : `${distance} tile${distance > 1 ? "s" : ""} away`}`));
-    const tiles = el("div", "hint-tiles");
-    for (const g of target.groups) {
-      const grp = el("span", "hint-group");
-      for (let i = 0; i < g.n; i++) grp.append(tileEl({ type: g.type }, { small: true }));
-      tiles.append(grp);
+  if (game.phase === "over") return;
+  const head = el("div", "lines-head");
+  head.append(el("span", "lines-title", "Your lines"), button(lines.length ? "Change lines" : "Pick lines", openPicker));
+  box.append(head);
+
+  if (!lines.length) {
+    box.append(el("div", "muted", isEasy()
+      ? "No lines picked yet. These are closest to your tiles:"
+      : "No lines picked yet. Open the card to choose up to 2."));
+    if (isEasy()) for (const r of closestHands(me.hand, me.exposures, 2)) box.append(lineEl(me, r.target.hand, r));
+  } else {
+    for (const id of lines) {
+      const hand = HANDS.find((h) => h.id === id);
+      box.append(lineEl(me, hand, isEasy() ? closestHands(me.hand, me.exposures, 1, new Set([id]))[0] : null));
     }
-    row.append(tiles);
-    box.append(row);
   }
-  if (pending?.kind === "turn") {
-    const action = chooseTurnAction(me, game.players);
-    if (action.type === "discard") box.append(el("div", "muted", `A computer player would discard: ${tileName(action.tile.type)}`));
+
+  if (isEasy() && pending?.kind === "turn" && !findWin(me.hand, me.exposures)) {
+    const tile = suggestDiscard(me, linesSet()) || suggestDiscard(me);
+    if (tile) box.append(el("div", "muted", `Suggested discard${lines.length ? " for your lines" : ""}: ${tileName(tile.type)}`));
   }
+}
+
+function lineEl(me, hand, best) {
+  const row = el("div", "line");
+  row.append(patternEl(hand.pattern), el("span", "muted", ` ${hand.value} pts${hand.note ? ` · ${hand.note}` : ""}`));
+  if (!isEasy()) return row;
+  if (!best) {
+    row.append(el("div", "line-status", "Not possible any more: concealed hands can't have exposures."));
+    return row;
+  }
+  row.append(el("div", "line-status", tilesToWin(best.distance)));
+  const tiles = el("div", "line-tiles");
+  for (const g of holdings(best.target, me.hand, me.exposures)) {
+    const grp = el("span", "line-group");
+    for (let i = 0; i < g.n; i++) grp.append(tileEl({ type: g.type }, { small: true, classes: i < g.have ? [] : ["missing"] }));
+    tiles.append(grp);
+  }
+  row.append(tiles);
+  return row;
 }
 
 function render() {
@@ -307,6 +351,7 @@ function render() {
   renderOpponents();
   renderCenter();
   renderMe();
+  if (!$("#picker").hidden) renderPicker();
 }
 
 // ---------- The card ----------
@@ -320,17 +365,73 @@ function patternEl(pattern) {
   return line;
 }
 
-function renderCard() {
-  const list = $("#cardList");
+// ---------- Card selection ----------
+
+function openPicker() {
+  pickerNotice = "";
+  $("#picker").hidden = false;
+  renderPicker();
+}
+
+function closePicker() {
+  $("#picker").hidden = true;
+  render();
+}
+
+function toggleLine(id) {
+  pickerNotice = "";
+  if (lines.includes(id)) lines = lines.filter((x) => x !== id);
+  else if (lines.length >= MAX_LINES) pickerNotice = `You can follow ${MAX_LINES} lines at a time. Unselect one first.`;
+  else lines = [...lines, id];
+  renderPicker();
+}
+
+function renderPicker() {
+  if (!game) return;
+  const me = game.players[0];
+  $("#pickerCount").textContent = `${lines.length}/${MAX_LINES} picked`;
+  $("#pickerNotice").textContent = pickerNotice;
+
+  const hand = $("#pickerHand");
+  hand.replaceChildren();
+  for (const exp of me.exposures) {
+    const g = el("span", "group");
+    for (const t of exp.tiles) g.append(tileEl(t, { small: true }));
+    hand.append(g);
+  }
+  for (const t of me.hand) hand.append(tileEl(t, { small: true }));
+
+  // Easy / Learning: how far each line is, and the closest few marked as suggestions.
+  const ranked = isEasy() ? closestHands(me.hand, me.exposures, HANDS.length) : [];
+  const distance = new Map(ranked.map((r) => [r.target.hand.id, r.distance]));
+  const suggested = new Set(ranked.slice(0, 3).map((r) => r.target.hand.id));
+
+  const list = $("#pickerList");
   list.replaceChildren();
+  if (isEasy() && ranked.length) {
+    list.append(el("h3", null, "Suggested for your tiles"));
+    for (const r of ranked.slice(0, 3)) list.append(pickerRow(r.target.hand, distance, suggested));
+  }
   for (const section of CARD) {
     list.append(el("h3", null, section.section));
-    for (const h of section.hands) {
-      const row = el("div", "card-row");
-      row.append(patternEl(h.p), el("span", "card-note", h.note || ""), el("span", "card-value", `${h.c ? "C" : "X"} ${h.v}`));
-      list.append(row);
-    }
+    for (const hand of HANDS.filter((h) => h.section === section.section)) list.append(pickerRow(hand, distance, suggested));
   }
+}
+
+function pickerRow(hand, distance, suggested) {
+  const picked = lines.indexOf(hand.id);
+  const row = el("button", `card-row${picked >= 0 ? " picked" : ""}`);
+  row.type = "button";
+  row.setAttribute("aria-pressed", String(picked >= 0));
+  row.addEventListener("click", () => toggleLine(hand.id));
+  const main = el("span", "card-main");
+  main.append(patternEl(hand.pattern));
+  if (picked >= 0) main.append(el("span", "badge", `Line ${picked + 1}`));
+  if (suggested.has(hand.id)) main.append(el("span", "badge suggest", "Suggested"));
+  const info = [hand.note];
+  if (isEasy()) info.push(distance.has(hand.id) ? tilesToWin(distance.get(hand.id)) : "not possible with your exposures");
+  row.append(main, el("span", "card-note", info.filter(Boolean).join(" · ")), el("span", "card-value", `${hand.concealed ? "C" : "X"} ${hand.value}`));
+  return row;
 }
 
 // ---------- Result ----------
@@ -378,12 +479,17 @@ $("#nextGameBtn").addEventListener("click", () => {
   dealer = (dealer + 1) % 4; // the deal passes to the right
   setTimeout(newGame, 0);
 });
-$("#cardBtn").addEventListener("click", () => { $("#cardPanel").hidden = !$("#cardPanel").hidden; });
-$("#cardClose").addEventListener("click", () => { $("#cardPanel").hidden = true; });
+$("#cardBtn").addEventListener("click", openPicker);
+$("#pickerDone").addEventListener("click", closePicker);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#picker").hidden) closePicker(); });
 $("#rulesBtn").addEventListener("click", () => $("#rulesDialog").showModal());
-$("#hintsToggle").addEventListener("change", render);
+$("#modeSelect").value = mode;
+$("#modeSelect").addEventListener("change", (e) => {
+  mode = e.target.value;
+  saveMode();
+  render();
+});
 
-renderCard();
 newGame();
 
 // Work offline: cache the whole game after the first visit.
