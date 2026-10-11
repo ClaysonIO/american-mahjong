@@ -77,3 +77,7 @@ The computer players work out how far their tiles are from every way of making
 every hand on the card (455 combinations). They keep the tiles that the closest
 hands need and discard the rest. They call a discard only when exposing it brings
 them closer to a hand that allows exposures.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

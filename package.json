@@ -7,5 +7,6 @@
   "scripts": {
     "start": "npx --yes http-server . -p 8080 -c-1",
     "test": "node --test test/*.test.js"
-  }
+  },
+  "license": "MIT"
 }
