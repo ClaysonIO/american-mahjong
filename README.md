@@ -52,6 +52,9 @@ and `?seed=42` makes the deals repeatable.
 - **Scoring:** the hand's value from each player. The discarder pays double,
   on a self-drawn win everyone pays double, and a hand with no jokers doubles again.
   Scores are kept across games in the browser.
+- **Saved games:** the game in progress survives a page refresh or closing the tab,
+  and every finished game is kept (the latest 50) under **History**: the result,
+  everyone's final tiles, the discards and every move.
 - **Modes** (top of the screen, remembered):
   - **Easy / Learning** marks the lines closest to your tiles as *Suggested*, shows how
     many tiles each line needs to win and which ones you're missing, and suggests a discard
@@ -80,6 +83,7 @@ be built from one set.
 | `js/tiles.js` | Tile types, the wall, sorting, a seeded random number generator |
 | `js/card.js` | The card, its notation parser, expanding each hand into every suit/number choice |
 | `js/matcher.js` | Distance from any set of tiles to every hand, win detection, scoring |
+| `js/record.js` | Saving games: your decisions (to rebuild the game in progress after a refresh) and snapshots of finished games for History |
 | `js/ai.js` | Computer players: Charleston passes, discards, calls, joker swaps |
 | `js/game.js` | The game engine (deal, Charleston, turns, calls). It asks each seat's controller for decisions, so it doesn't depend on the UI |
 | `js/ui.js` | Rendering and the human player's controller |

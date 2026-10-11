@@ -370,14 +370,16 @@ function myTiles(me) {
 function startDrag(ev, tile) {
   if (ev.button !== 0 || drag) return;
   const r = tile.getBoundingClientRect();
-  drag = { el: tile, x: ev.clientX, y: ev.clientY, grabX: ev.clientX - r.left, grabY: ev.clientY - r.top, moved: false, stale: false };
-  tile.setPointerCapture(ev.pointerId);
-  tile.addEventListener("pointermove", moveDrag);
-  tile.addEventListener("pointerup", endDrag);
-  tile.addEventListener("pointercancel", endDrag);
+  drag = { el: tile, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, grabX: ev.clientX - r.left, grabY: ev.clientY - r.top, moved: false, stale: false };
+  // Listen on the window, not the tile: moving the tile in the page while dragging
+  // drops pointer capture, and the release would then go to some other tile.
+  window.addEventListener("pointermove", moveDrag);
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("pointercancel", endDrag);
 }
 
 function moveDrag(ev) {
+  if (ev.pointerId !== drag.pointerId) return;
   if (!drag.moved && Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return; // still a click
   drag.moved = true;
   drag.el.classList.add("dragging");
@@ -396,12 +398,13 @@ function moveDrag(ev) {
   drag.el.style.transform = `translate(${ev.clientX - drag.grabX - r.left}px, ${ev.clientY - drag.grabY - r.top}px)`;
 }
 
-function endDrag() {
+function endDrag(ev) {
+  if (ev.pointerId !== drag.pointerId) return;
   const d = drag;
   drag = null;
-  d.el.removeEventListener("pointermove", moveDrag);
-  d.el.removeEventListener("pointerup", endDrag);
-  d.el.removeEventListener("pointercancel", endDrag);
+  window.removeEventListener("pointermove", moveDrag);
+  window.removeEventListener("pointerup", endDrag);
+  window.removeEventListener("pointercancel", endDrag);
   d.el.classList.remove("dragging");
   d.el.style.transform = "";
   if (d.moved) {
@@ -578,7 +581,7 @@ function resultEl(entry) {
   if (r.wallGame) return el("p", null, "The wall ran out and nobody made a hand.");
   const how = r.selfDrawn
     ? "Self-drawn — everyone pays double."
-    : `On ${entry.players[r.discarder].name}'s discard — the discarder pays double.`;
+    : `On ${r.discarder === 0 ? "your" : `${entry.players[r.discarder].name}'s`} discard — the discarder pays double.`;
   const p = el("p");
   p.append(patternEl(r.pattern), ` worth ${r.value}. ${how}`);
   if (r.jokerless) p.append(" No jokers — doubled!");
@@ -626,9 +629,11 @@ function showHistory() {
       const mine = entry.result.wallGame ? 0 : entry.result.payments[0];
       const item = el("button", "history-item");
       item.type = "button";
+      const what = el("span", "history-what", resultTitle(entry).replace("Mahjong! ", ""));
+      if (!entry.result.wallGame) what.append(" ", patternEl(entry.result.pattern));
       item.append(
         el("span", "history-date", formatDate(entry.endedAt)),
-        el("span", "history-what", `${resultTitle(entry).replace("Mahjong! ", "")}${entry.result.wallGame ? "" : ` · ${entry.result.pattern}`}`),
+        what,
         el("span", `history-pts${mine > 0 ? " won" : mine < 0 ? " lost" : ""}`, `${mine > 0 ? "+" : ""}${mine}`),
       );
       item.addEventListener("click", () => showHistoryEntry(entry));
@@ -644,7 +649,11 @@ function showHistoryEntry(entry) {
   const body = $("#historyBody");
   const back = button("← All games", showHistory);
   const meta = el("p", "muted", `${formatDate(entry.endedAt)} · ${entry.mode === "regular" ? "Regular" : "Easy / Learning"} · `
-    + `East: ${entry.players[entry.dealer].name}${entry.lines?.length ? ` · Your lines: ${entry.lines.join(", ")}` : ""}`);
+    + `East: ${entry.players[entry.dealer].name}`);
+  if (entry.lines?.length) {
+    meta.append(" · Your lines: ");
+    entry.lines.forEach((pattern, i) => meta.append(i ? ", " : "", patternEl(pattern)));
+  }
   const discards = el("div", "history-discards");
   discards.append(...entry.discards.map((d) => tileEl({ type: d.type }, { small: true })));
   const log = el("ol", "history-log");
