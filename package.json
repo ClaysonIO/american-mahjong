@@ -1,0 +1,11 @@
+{
+  "name": "american-mahjong",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single-player American Mahjong in the browser against three computer players",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server . -p 8080 -c-1",
+    "test": "node --test test/*.test.js"
+  }
+}
