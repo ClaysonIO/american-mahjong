@@ -35,6 +35,9 @@ let notice = "";
 let mode = loadMode(); // "easy" (Easy / Learning: suggestions and tiles-to-win) or "regular"
 let lines = []; // ids of the card hands (lines) you picked, at most MAX_LINES
 let pickerNotice = "";
+let handOrder = null; // your tiles' ids in the order you dragged them into; null = sorted
+let drag = null; // the hand tile being dragged
+let suppressClick = false; // the click that ends a drag isn't a tile pick
 
 const isEasy = () => mode === "easy";
 const linesSet = () => (lines.length ? new Set(lines) : null);
@@ -97,6 +100,7 @@ function newGame() {
   selected.clear();
   notice = "";
   lines = [];
+  handOrder = null;
   const g = new Game({
     names: NAMES,
     dealer,
@@ -209,16 +213,21 @@ function renderMe() {
 
   $("#myExposures").replaceChildren(...exposuresEl(me).childNodes);
 
-  const kind = pending?.kind;
-  const hand = $("#hand");
-  hand.replaceChildren();
-  for (const t of me.hand) {
-    const classes = [];
-    if (selected.has(t.id)) classes.push("selected");
-    if (t === me.lastDrawn || me.received.includes(t)) classes.push("fresh");
-    const clickable = kind === "charleston" || kind === "turn";
-    hand.append(tileEl(t, { classes, onClick: clickable ? () => clickTile(t) : null }));
+  if (drag) drag.stale = true; // don't rebuild the hand under a tile being dragged
+  else {
+    const hand = $("#hand");
+    hand.replaceChildren();
+    for (const t of myTiles(me)) {
+      const classes = [];
+      if (selected.has(t.id)) classes.push("selected");
+      if (t === me.lastDrawn || me.received.includes(t)) classes.push("fresh");
+      const e = tileEl(t, { classes, onClick: () => clickTile(t) });
+      e.dataset.id = t.id;
+      e.addEventListener("pointerdown", (ev) => startDrag(ev, e));
+      hand.append(e);
+    }
   }
+  $("#handTools").replaceChildren(...(handOrder ? [button("Sort tiles", () => { handOrder = null; render(); })] : []));
 
   renderPrompt(me);
   renderLines(me);
@@ -286,7 +295,63 @@ function findJokerSwap(tile) {
   return null;
 }
 
+/** Your concealed tiles in the order you arranged them; new tiles go on the right. */
+function myTiles(me) {
+  if (!handOrder) return me.hand;
+  const byId = new Map(me.hand.map((t) => [t.id, t]));
+  const arranged = handOrder.map((id) => byId.get(id)).filter(Boolean);
+  return [...arranged, ...me.hand.filter((t) => !handOrder.includes(t.id))];
+}
+
+// ---------- Dragging tiles to rearrange the hand (mouse and touch) ----------
+
+function startDrag(ev, tile) {
+  if (ev.button !== 0 || drag) return;
+  const r = tile.getBoundingClientRect();
+  drag = { el: tile, x: ev.clientX, y: ev.clientY, grabX: ev.clientX - r.left, grabY: ev.clientY - r.top, moved: false, stale: false };
+  tile.setPointerCapture(ev.pointerId);
+  tile.addEventListener("pointermove", moveDrag);
+  tile.addEventListener("pointerup", endDrag);
+  tile.addEventListener("pointercancel", endDrag);
+}
+
+function moveDrag(ev) {
+  if (!drag.moved && Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return; // still a click
+  drag.moved = true;
+  drag.el.classList.add("dragging");
+  // Slot the tile in before the first tile the pointer is left of (or above).
+  const hand = $("#hand");
+  const before = [...hand.children].find((c) => {
+    if (c === drag.el) return false;
+    const r = c.getBoundingClientRect();
+    return ev.clientY < r.top || (ev.clientY < r.bottom && ev.clientX < r.left + r.width / 2);
+  });
+  if (before) { if (drag.el.nextElementSibling !== before) hand.insertBefore(drag.el, before); }
+  else if (hand.lastElementChild !== drag.el) hand.append(drag.el);
+  // Keep it under the pointer wherever its slot is now.
+  drag.el.style.transform = "";
+  const r = drag.el.getBoundingClientRect();
+  drag.el.style.transform = `translate(${ev.clientX - drag.grabX - r.left}px, ${ev.clientY - drag.grabY - r.top}px)`;
+}
+
+function endDrag() {
+  const d = drag;
+  drag = null;
+  d.el.removeEventListener("pointermove", moveDrag);
+  d.el.removeEventListener("pointerup", endDrag);
+  d.el.removeEventListener("pointercancel", endDrag);
+  d.el.classList.remove("dragging");
+  d.el.style.transform = "";
+  if (d.moved) {
+    handOrder = [...$("#hand").children].map((c) => Number(c.dataset.id));
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
+    render();
+  } else if (d.stale) setTimeout(render, 0); // after the click is handled
+}
+
 function clickTile(t) {
+  if (suppressClick || (pending?.kind !== "charleston" && pending?.kind !== "turn")) return;
   notice = "";
   if (pending.kind === "charleston") {
     if (selected.has(t.id)) selected.delete(t.id);
@@ -399,7 +464,7 @@ function renderPicker() {
     for (const t of exp.tiles) g.append(tileEl(t, { small: true }));
     hand.append(g);
   }
-  for (const t of me.hand) hand.append(tileEl(t, { small: true }));
+  for (const t of myTiles(me)) hand.append(tileEl(t, { small: true }));
 
   // Easy / Learning: how far each line is, and the closest few marked as suggestions.
   const ranked = isEasy() ? closestHands(me.hand, me.exposures, HANDS.length) : [];

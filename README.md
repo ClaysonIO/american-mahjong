@@ -43,6 +43,8 @@ and `?seed=42` makes the deals repeatable.
 - **Lines:** after the deal, the card opens with your tiles fixed at the top and the card
   scrolling underneath. Pick up to 2 lines (hands) to aim for; the **Card** button
   changes them at any time.
+- **Arranging tiles:** drag tiles in your hand (mouse or touch) to put them in any order;
+  new tiles arrive on the right, and **Sort tiles** puts the hand back in order.
 - **Calling:** call a discard to expose a pung, kong or quint (jokers fill in), or to win.
   Mahjong beats an exposure; otherwise the player next in turn wins the call.
   Concealed hands only take a discard to win.

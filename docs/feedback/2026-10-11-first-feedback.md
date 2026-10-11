@@ -24,6 +24,12 @@
 | 7 | **Suggestions only in Easy / Learning** | Easy mode marks the closest lines as *Suggested* on the card selection screen and suggests a discard that fits your chosen lines. Regular mode shows neither. | Done |
 | 8 | **"8 tiles to win" only in Easy / Learning** | The count of tiles still needed (per line on the card selection screen and for your chosen lines) shows only in Easy mode. Regular mode shows just the lines you picked. | Done |
 
+## Follow-up request
+
+| # | Item | How we read it | Status |
+| --- | --- | --- | --- |
+| 9 | **Drag to rearrange tiles** | Tiles in your hand can be dragged into any order with a mouse or by touch. A click without dragging still selects a tile. The order lasts for the game; new tiles arrive on the right, and **Sort tiles** goes back to sorted order. | Done |
+
 ## Not changed
 
 - Regular mode still enables the **Mahjong!** button only when your hand is complete;

@@ -135,6 +135,11 @@ button.primary { background: var(--accent); border-color: #b45309; font-weight: 
 button.tile:hover { transform: translateY(-3px); }
 .tile.fresh { box-shadow: 0 0 0 2px #38bdf8; }
 .tile.selected { transform: translateY(-10px); box-shadow: 0 0 0 3px var(--accent); }
+/* Hand tiles can be dragged to rearrange them (touch-action lets touch drags work). */
+#hand .tile { touch-action: none; cursor: grab; }
+#hand .tile.dragging { position: relative; z-index: 5; cursor: grabbing; box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45); }
+.hand-tools { display: flex; justify-content: flex-end; }
+.hand-tools button { padding: 2px 10px; font-size: 0.8rem; margin-top: 4px; }
 
 /* ---------- My area ---------- */
 .hand { display: flex; flex-wrap: wrap; gap: 3px; padding-top: 12px; min-height: 80px; }
