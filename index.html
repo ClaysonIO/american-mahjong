@@ -21,6 +21,7 @@
         </select>
       </label>
       <button type="button" id="cardBtn">Card</button>
+      <button type="button" id="historyBtn">History</button>
       <button type="button" id="rulesBtn">How to play</button>
       <button type="button" id="newGameBtn">New game</button>
     </div>
@@ -77,6 +78,14 @@
     <div id="resultBody"></div>
     <form method="dialog" class="dialog-actions">
       <button value="next" id="nextGameBtn">Next game</button>
+    </form>
+  </dialog>
+
+  <dialog id="historyDialog" class="history-dialog">
+    <div id="historyBody" class="history-body"></div>
+    <form method="dialog" class="dialog-actions">
+      <button type="button" id="clearHistoryBtn" class="danger">Clear history</button>
+      <button value="close">Close</button>
     </form>
   </dialog>
 

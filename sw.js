@@ -12,6 +12,7 @@ const FILES = [
   "js/card.js",
   "js/game.js",
   "js/matcher.js",
+  "js/record.js",
   "js/tiles.js",
   "js/ui.js",
   "icons/icon.svg",

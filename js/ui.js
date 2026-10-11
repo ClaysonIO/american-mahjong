@@ -4,6 +4,7 @@ import { Game, aiController } from "./game.js";
 import { CARD, HANDS } from "./card.js";
 import { closestHands, findWin, holdings } from "./matcher.js";
 import { suggestDiscard } from "./ai.js";
+import { RECORD_VERSION, recordedController, snapshot } from "./record.js";
 import { JOKER, WIND_NAMES, seededRng, tileName } from "./tiles.js";
 
 // How long computer players think, in ms (?delay=0 in the address speeds them up).
@@ -16,6 +17,10 @@ const ARROWS = { right: "→", across: "↑", left: "←" };
 const GROUP_NAMES = { 3: "Pung", 4: "Kong", 5: "Quint" };
 const SCORES_KEY = "mahjong.scores";
 const MODE_KEY = "mahjong.mode";
+const CURRENT_KEY = "mahjong.current"; // the game in progress: seed + your decisions
+const HISTORY_KEY = "mahjong.history"; // finished games, newest first
+const DEALER_KEY = "mahjong.dealer";
+const HISTORY_LIMIT = 50;
 const MAX_LINES = 2;
 
 const $ = (sel) => document.querySelector(sel);
@@ -27,8 +32,10 @@ const el = (tag, cls, text) => {
 };
 
 let scores = loadScores();
-let dealer = 0;
+let dealer = loadJSON(DEALER_KEY, 0);
 let game = null;
+let record = null; // the game in progress as saved: { v, seed, dealer, startedAt, decisions, lines, handOrder }
+let replaying = false; // rebuilding a saved game after a refresh: no delays, no drawing
 let pending = null; // what the game is waiting for us to decide: { kind, resolve, ... }
 let selected = new Set(); // ids of selected tiles in my hand
 let notice = "";
@@ -51,37 +58,58 @@ function saveMode() {
 }
 
 function loadScores() {
-  try {
-    const s = JSON.parse(localStorage.getItem(SCORES_KEY));
-    if (Array.isArray(s) && s.length === 4) return s;
-  } catch (_) { /* ignore */ }
-  return [0, 0, 0, 0];
+  const s = loadJSON(SCORES_KEY, null);
+  return Array.isArray(s) && s.length === 4 ? s : [0, 0, 0, 0];
 }
-function saveScores() {
-  try { localStorage.setItem(SCORES_KEY, JSON.stringify(scores)); } catch (_) { /* ignore */ }
+function saveScores() { saveJSON(SCORES_KEY, scores); }
+
+// Storage can be missing or full (private windows); the game still works without it.
+function loadJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (_) { return fallback; }
+}
+function saveJSON(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (_) { return false; }
 }
 
-// ---------- The human player's controller ----------
+// ---------- Saving the game in progress and past games ----------
 
-function humanController(forGame) {
-  // Questions from a game that was abandoned (New game) are never answered.
-  const ask = (req) => new Promise((resolve) => {
+function saveCurrent() {
+  if (record) saveJSON(CURRENT_KEY, { ...record, lines, handOrder });
+}
+
+function clearCurrent() {
+  record = null;
+  try { localStorage.removeItem(CURRENT_KEY); } catch (_) { /* ignore */ }
+}
+
+function loadCurrent() {
+  const r = loadJSON(CURRENT_KEY, null);
+  const ok = r && r.v === RECORD_VERSION && Number.isInteger(r.seed) && Number.isInteger(r.dealer) && Array.isArray(r.decisions);
+  return ok ? r : null;
+}
+
+function loadHistory() {
+  const h = loadJSON(HISTORY_KEY, []);
+  return Array.isArray(h) ? h : [];
+}
+
+function addToHistory(entry) {
+  const history = [entry, ...loadHistory()].slice(0, HISTORY_LIMIT);
+  // If storage is full, keep fewer old games rather than losing this one.
+  for (let keep = history.length; keep > 0; keep = Math.floor(keep / 2)) {
+    if (saveJSON(HISTORY_KEY, history.slice(0, keep))) return;
+  }
+}
+
+// Questions from a game that was abandoned (New game) are never answered.
+function ask(forGame, req) {
+  return new Promise((resolve) => {
     if (forGame !== game) return;
     selected.clear();
     notice = "";
     pending = { ...req, resolve };
     render();
   });
-  return {
-    chooseCharlestonPass: (g, seat, direction) => ask({ kind: "charleston", direction }),
-    wantsSecondCharleston: () => ask({ kind: "second" }),
-    chooseTurnAction: () => ask({ kind: "turn" }),
-    chooseCall(g, seat, tile, discarder) {
-      const opts = g.callOptions(seat, tile);
-      if (!opts.mahjong && !opts.sizes.length) return Promise.resolve(null);
-      return ask({ kind: "call", tile, discarder, opts });
-    },
-  };
 }
 
 function answer(value) {
@@ -95,36 +123,70 @@ function answer(value) {
 
 // ---------- Game lifecycle ----------
 
-function newGame() {
+const nextSeed = () => (seed !== null ? seed++ : Math.floor(Math.random() * 2 ** 32));
+
+/** Deals a new game, or with `saved`, rebuilds a saved game by replaying your decisions. */
+function newGame(saved = null) {
   pending = null;
   selected.clear();
   notice = "";
-  lines = [];
-  handOrder = null;
+  record = saved
+    ? { ...saved, decisions: [...saved.decisions] }
+    : { v: RECORD_VERSION, seed: nextSeed(), dealer, startedAt: new Date().toISOString(), decisions: [] };
+  lines = saved?.lines ?? [];
+  handOrder = saved?.handOrder ?? null;
+  replaying = !!saved?.decisions.length;
+  const delay = () => (replaying ? 0 : AI_DELAY);
   const g = new Game({
     names: NAMES,
-    dealer,
-    rng: seed === null ? Math.random : seededRng(seed++),
-    controllers: [null, aiController(AI_DELAY), aiController(AI_DELAY), aiController(AI_DELAY)],
-    onUpdate: (current) => { if (current === game) render(); },
+    dealer: record.dealer,
+    rng: seededRng(record.seed),
+    controllers: [null, aiController(delay), aiController(delay), aiController(delay)],
+    onUpdate: (current) => { if (current === game && !replaying) render(); },
   });
-  g.controllers[0] = humanController(g);
+  const rec = record;
+  g.controllers[0] = recordedController({
+    decide: (kind, _g, _seat, args) => ask(g, { kind, ...args }),
+    replay: saved?.decisions ?? [],
+    onRecord: (d) => { if (g === game) { rec.decisions.push(d); saveCurrent(); } },
+    onLive: () => { if (g === game) { replaying = false; render(); } },
+  });
   game = g;
+  saveCurrent();
   g.run().then((result) => {
     if (g !== game) return;
+    replaying = false;
     if (!result.wallGame) {
       result.payments.forEach((p, i) => { scores[i] += p; });
       saveScores();
     }
+    const entry = snapshot(g, { mode, lines: lines.map(linePattern), seed: rec.seed, decisions: rec.decisions, startedAt: rec.startedAt });
+    addToHistory(entry);
+    clearCurrent();
+    dealer = (rec.dealer + 1) % 4; // the deal passes to the right
+    saveJSON(DEALER_KEY, dealer);
     render();
-    showResult(result);
+    showResult(entry, { totals: scores });
   }).catch((err) => {
+    if (g !== game) return;
     console.error(err);
+    replaying = false;
+    if (saved) {
+      // The saved game can't be rebuilt (e.g. the game was updated since); start fresh.
+      clearCurrent();
+      newGame();
+      notice = "Your last game couldn't be restored, so here's a new one.";
+      render();
+      return;
+    }
     notice = `Something went wrong: ${err.message}`;
     render();
   });
-  openPicker();
+  if (saved) render();
+  else openPicker();
 }
+
+const linePattern = (id) => HANDS.find((h) => h.id === id)?.pattern ?? id;
 
 // ---------- Tiles ----------
 
@@ -227,7 +289,7 @@ function renderMe() {
       hand.append(e);
     }
   }
-  $("#handTools").replaceChildren(...(handOrder ? [button("Sort tiles", () => { handOrder = null; render(); })] : []));
+  $("#handTools").replaceChildren(...(handOrder ? [button("Sort tiles", () => { handOrder = null; saveCurrent(); render(); })] : []));
 
   renderPrompt(me);
   renderLines(me);
@@ -344,6 +406,7 @@ function endDrag() {
   d.el.style.transform = "";
   if (d.moved) {
     handOrder = [...$("#hand").children].map((c) => Number(c.dataset.id));
+    saveCurrent();
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
     render();
@@ -448,6 +511,7 @@ function toggleLine(id) {
   if (lines.includes(id)) lines = lines.filter((x) => x !== id);
   else if (lines.length >= MAX_LINES) pickerNotice = `You can follow ${MAX_LINES} lines at a time. Unselect one first.`;
   else lines = [...lines, id];
+  saveCurrent();
   renderPicker();
 }
 
@@ -501,48 +565,109 @@ function pickerRow(hand, distance, suggested) {
 
 // ---------- Result ----------
 
-function showResult(result) {
-  const body = $("#resultBody");
-  body.replaceChildren();
-  if (result.wallGame) {
-    body.append(el("h2", null, "Wall game"), el("p", null, "The wall ran out and nobody made a hand."));
-  } else {
-    const winner = game.players[result.winner];
-    body.append(el("h2", null, winner.seat === 0 ? "Mahjong! You win!" : `Mahjong! ${winner.name} wins`));
-    const how = result.selfDrawn ? "Self-drawn — everyone pays double." : `On ${game.players[result.discarder].name}'s discard — the discarder pays double.`;
-    const p = el("p");
-    p.append(patternEl(result.target.hand.pattern), ` worth ${result.value}. ${how}`);
-    if (result.jokerless) p.append(" No jokers — doubled!");
-    body.append(p);
-  }
+// Results and history both work from a saved snapshot (see record.js), with tile types only.
+
+function resultTitle(entry) {
+  const r = entry.result;
+  if (r.wallGame) return "Wall game";
+  return r.winner === 0 ? "Mahjong! You win!" : `Mahjong! ${entry.players[r.winner].name} wins`;
+}
+
+function resultEl(entry) {
+  const r = entry.result;
+  if (r.wallGame) return el("p", null, "The wall ran out and nobody made a hand.");
+  const how = r.selfDrawn
+    ? "Self-drawn — everyone pays double."
+    : `On ${entry.players[r.discarder].name}'s discard — the discarder pays double.`;
+  const p = el("p");
+  p.append(patternEl(r.pattern), ` worth ${r.value}. ${how}`);
+  if (r.jokerless) p.append(" No jokers — doubled!");
+  return p;
+}
+
+const typesEl = (types) => types.map((type) => tileEl({ type }, { small: true }));
+
+/** Everyone's final tiles; with `totals`, the running scores too. */
+function revealEl(entry, totals = null) {
   const table = el("div", "reveal");
-  for (const pl of game.players) {
+  entry.players.forEach((pl, seat) => {
+    const pay = entry.result.wallGame ? 0 : entry.result.payments[seat];
     const row = el("div", "reveal-row");
-    const pay = result.wallGame ? 0 : result.payments[pl.seat];
-    row.append(el("b", null, `${pl.name} (${pay > 0 ? "+" : ""}${pay}, total ${scores[pl.seat]})`));
+    row.append(el("b", null, `${pl.name} (${pay > 0 ? "+" : ""}${pay}${totals ? `, total ${totals[seat]}` : ""})`));
     const tiles = el("div", "reveal-tiles");
     for (const exp of pl.exposures) {
       const g = el("span", "group");
-      for (const t of exp.tiles) g.append(tileEl(t, { small: true }));
+      g.append(...typesEl(exp));
       tiles.append(g);
     }
-    for (const t of pl.hand) tiles.append(tileEl(t, { small: true }));
+    tiles.append(...typesEl(pl.hand));
     row.append(tiles);
     table.append(row);
-  }
-  body.append(table);
+  });
+  return table;
+}
+
+function showResult(entry, { totals }) {
+  $("#resultBody").replaceChildren(el("h2", null, resultTitle(entry)), resultEl(entry), revealEl(entry, totals));
   $("#resultDialog").showModal();
+}
+
+const formatDate = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+function showHistory() {
+  const history = loadHistory();
+  const body = $("#historyBody");
+  body.replaceChildren(el("h2", null, "Past games"));
+  if (!history.length) {
+    body.append(el("p", "muted", "No finished games yet. Games are saved here when they end."));
+  } else {
+    const list = el("div", "history-list");
+    history.forEach((entry) => {
+      const mine = entry.result.wallGame ? 0 : entry.result.payments[0];
+      const item = el("button", "history-item");
+      item.type = "button";
+      item.append(
+        el("span", "history-date", formatDate(entry.endedAt)),
+        el("span", "history-what", `${resultTitle(entry).replace("Mahjong! ", "")}${entry.result.wallGame ? "" : ` · ${entry.result.pattern}`}`),
+        el("span", `history-pts${mine > 0 ? " won" : mine < 0 ? " lost" : ""}`, `${mine > 0 ? "+" : ""}${mine}`),
+      );
+      item.addEventListener("click", () => showHistoryEntry(entry));
+      list.append(item);
+    });
+    body.append(list);
+  }
+  $("#clearHistoryBtn").hidden = !history.length;
+  if (!$("#historyDialog").open) $("#historyDialog").showModal();
+}
+
+function showHistoryEntry(entry) {
+  const body = $("#historyBody");
+  const back = button("← All games", showHistory);
+  const meta = el("p", "muted", `${formatDate(entry.endedAt)} · ${entry.mode === "regular" ? "Regular" : "Easy / Learning"} · `
+    + `East: ${entry.players[entry.dealer].name}${entry.lines?.length ? ` · Your lines: ${entry.lines.join(", ")}` : ""}`);
+  const discards = el("div", "history-discards");
+  discards.append(...entry.discards.map((d) => tileEl({ type: d.type }, { small: true })));
+  const log = el("ol", "history-log");
+  log.append(...entry.log.map((m) => el("li", null, m)));
+  body.replaceChildren(back, el("h2", null, resultTitle(entry)), meta, resultEl(entry), revealEl(entry),
+    el("h3", null, "Discards"), discards, el("h3", null, "Every move"), log);
+  $("#clearHistoryBtn").hidden = true;
+  body.scrollTop = 0;
 }
 
 // ---------- Wiring ----------
 
 $("#newGameBtn").addEventListener("click", () => {
   if (game && game.phase !== "over" && !confirm("Abandon this game and deal a new one?")) return;
+  clearCurrent();
   newGame();
 });
-$("#nextGameBtn").addEventListener("click", () => {
-  dealer = (dealer + 1) % 4; // the deal passes to the right
-  setTimeout(newGame, 0);
+$("#nextGameBtn").addEventListener("click", () => setTimeout(() => newGame(), 0));
+$("#historyBtn").addEventListener("click", showHistory);
+$("#clearHistoryBtn").addEventListener("click", () => {
+  if (!confirm("Delete all saved past games?")) return;
+  try { localStorage.removeItem(HISTORY_KEY); } catch (_) { /* ignore */ }
+  showHistory();
 });
 $("#cardBtn").addEventListener("click", openPicker);
 $("#pickerDone").addEventListener("click", closePicker);
@@ -555,7 +680,8 @@ $("#modeSelect").addEventListener("change", (e) => {
   render();
 });
 
-newGame();
+// Pick up the game in progress after a refresh, or deal a new one.
+newGame(loadCurrent());
 
 // Work offline: cache the whole game after the first visit.
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

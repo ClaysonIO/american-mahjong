@@ -18,18 +18,22 @@ const GROUP_NAMES = { 3: "pung", 4: "kong", 5: "quint", 6: "sextet" };
 const possessive = (name) => (name === "You" ? "your" : `${name}'s`);
 const sleep = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
-/** A computer player. `delay` slows it down so people can follow along. */
+/**
+ * A computer player. `delay` (ms, or a function returning ms) slows it down so
+ * people can follow along.
+ */
 export function aiController(delay = 0) {
+  const ms = () => (typeof delay === "function" ? delay() : delay);
   return {
     async chooseCharlestonPass(game, seat) {
-      await sleep(delay / 2);
+      await sleep(ms() / 2);
       return ai.chooseCharlestonPass(game.players[seat].hand);
     },
     async wantsSecondCharleston(game, seat) {
       return ai.wantsSecondCharleston(game.players[seat].hand);
     },
     async chooseTurnAction(game, seat) {
-      await sleep(delay);
+      await sleep(ms());
       return ai.chooseTurnAction(game.players[seat], game.players);
     },
     async chooseCall(game, seat, tile) {

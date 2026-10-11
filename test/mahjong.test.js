@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { HANDS, parsePattern, expandHand } from "../js/card.js";
 import { findWin, bestDistance, scoreWin, TARGETS, closestHands, holdings } from "../js/matcher.js";
 import { suggestDiscard } from "../js/ai.js";
+import { recordedController, snapshot } from "../js/record.js";
 import { countsOf, buildWall, seededRng, TYPES } from "../js/tiles.js";
 import { Game, aiController } from "../js/game.js";
 
@@ -149,4 +150,47 @@ test("suggested discard keeps the tiles the picked lines need", () => {
   const id = TARGETS.find((t) => t.hand.pattern === "222a 4444a 666a 8888a").hand.id;
   const tile = suggestDiscard({ hand, exposures: [] }, new Set([id]));
   assert.ok(["N", "E", "W", "S"].includes(tile.type), `discarded ${tile.type}`);
+});
+
+// The recorded seat plays like a computer player, so games are realistic.
+function aiDecide() {
+  const ai = aiController(0);
+  return (kind, g, s, args) => ({
+    charleston: () => ai.chooseCharlestonPass(g, s, args.direction),
+    second: () => ai.wantsSecondCharleston(g, s),
+    turn: () => ai.chooseTurnAction(g, s),
+    call: () => ai.chooseCall(g, s, args.tile),
+  })[kind]();
+}
+
+async function playRecorded(seed, dealer, replay = []) {
+  const decisions = [...replay];
+  const seat0 = recordedController({ decide: aiDecide(), replay, onRecord: (d) => decisions.push(d) });
+  const game = new Game({ controllers: [seat0, aiController(0), aiController(0), aiController(0)], rng: seededRng(seed), dealer });
+  await game.run();
+  return { game, decisions };
+}
+
+test("a saved game replays to exactly the same game, in full or from partway through", async () => {
+  for (const seed of [3, 8, 21]) {
+    const original = await playRecorded(seed, seed % 4);
+    assert.ok(original.decisions.length > 3);
+    const replayed = await playRecorded(seed, seed % 4, original.decisions);
+    assert.deepEqual(replayed.game.log, original.game.log);
+    assert.deepEqual(replayed.decisions, original.decisions);
+    // A refresh mid-game: replay the first half, then keep playing live.
+    const half = original.decisions.slice(0, Math.floor(original.decisions.length / 2));
+    const resumed = await playRecorded(seed, seed % 4, half);
+    assert.deepEqual(resumed.game.log, original.game.log);
+    assert.deepEqual(resumed.decisions, original.decisions);
+    // The review snapshot is plain JSON.
+    const snap = snapshot(original.game, { mode: "easy", lines: [], seed, decisions: original.decisions, startedAt: "x" });
+    assert.deepEqual(JSON.parse(JSON.stringify(snap)), snap);
+    assert.equal(snap.players[0].hand.length + snap.players[0].exposures.flat().length >= 13, true);
+  }
+});
+
+test("a saved game that no longer fits the deal is rejected", async () => {
+  const { decisions } = await playRecorded(3, 3);
+  await assert.rejects(playRecorded(4, 3, decisions), /Saved game doesn't match/);
 });
